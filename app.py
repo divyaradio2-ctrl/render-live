@@ -10,6 +10,7 @@ app = Flask(__name__)
 stream_running = False
 ffmpeg_process = None
 match_index = 0
+last_error = "None"
 
 MAX_DURATION = 604800
 
@@ -18,7 +19,7 @@ HTML_PAGE = """
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Render Direct 24/7 Live</title>
+    <title>Render 24/7 Lite Live</title>
     <style>
         body { font-family: Arial, sans-serif; background: #070b14; color: white; padding: 20px; text-align: center; }
         .box { max-width: 460px; margin: auto; background: #111827; padding: 25px; border-radius: 14px; border: 1px solid #1f2937; }
@@ -26,13 +27,13 @@ HTML_PAGE = """
         button { width: 98%; padding: 16px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 10px; }
         .start { background: #16a34a; color: white; }
         .stop { background: #dc2626; color: white; }
-        .status { padding: 14px; background: #1e293b; border-radius: 8px; margin-bottom: 15px; color: #38bdf8; font-size: 15px; }
+        .status { padding: 14px; background: #1e293b; border-radius: 8px; margin-bottom: 15px; color: #38bdf8; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="box">
         <h2>🌍 Render 24/7 Sports Live</h2>
-        <div class="status">Status: <b>{{ status }}</b></div>
+        <div class="status">Status: <b>{{ status }}</b><br><small style="color:#f87171;">Log: {{ err }}</small></div>
         <form method="POST" action="/start">
             <input type="text" name="yt_key" placeholder="यहाँ अपनी YouTube Stream Key डालें" required><br>
             <button type="submit" class="start">▶ START NON-STOP LIVE</button>
@@ -62,15 +63,15 @@ def get_worldwide_matches():
                     name = ev.get("shortName", ev.get("name", "LIVE MATCH"))
                     status_detail = ev.get("status", {}).get("type", {}).get("shortDetail", "Live Updates")
                     comp = ev.get("competitions", [{}])
-                    competitors = comp[0].get("competitors", []) if comp else []
+                    competitors = comp.get("competitors", []) if comp else []
                     score_str = "Match Starting Soon"
                     if len(competitors) >= 2:
-                        t1 = competitors[0].get("team", {}).get("abbreviation", "TEAM 1")
-                        s1 = competitors[0].get("score", "0")
-                        t2 = competitors[1].get("team", {}).get("abbreviation", "TEAM 2")
-                        s2 = competitors[1].get("score", "0")
+                        t1 = competitors.get("team", {}).get("abbreviation", "TEAM 1")
+                        s1 = competitors.get("score", "0")
+                        t2 = competitors.get("team", {}).get("abbreviation", "TEAM 2")
+                        s2 = competitors.get("score", "0")
                         score_str = f"{t1}  {s1}   vs   {t2}  {s2}"
-                    item = (sport_label, name[:42], score_str[:38], status_detail[:50], state == "in")
+                    item = (sport_label, name[:38], score_str[:34], status_detail[:45], state == "in")
                     if state == "in":
                         matches.insert(0, item)
                     else:
@@ -82,38 +83,40 @@ def get_worldwide_matches():
     return matches[:10]
 
 def make_scoreboard_image(sport, match_name, score, detail, is_live):
-    img = Image.new("RGB", (1280, 720), color=(9, 13, 26))
+    # Render के 512MB RAM के लिए 854x480 (HD Lite) साइज ताकि RAM कभी न भरे
+    img = Image.new("RGB", (854, 480), color=(9, 13, 26))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([(15, 15), (1265, 705)], outline=(56, 189, 248), width=5)
-    draw.rectangle([(15, 15), (1265, 125)], fill=(2, 132, 199))
-    draw.rectangle([(60, 165), (1220, 515)], fill=(17, 24, 39), outline=(55, 65, 81), width=3)
+    draw.rectangle([(10, 10), (844, 470)], outline=(56, 189, 248), width=4)
+    draw.rectangle([(10, 10), (844, 85)], fill=(2, 132, 199))
+    draw.rectangle([(40, 110), (814, 345)], fill=(17, 24, 39), outline=(55, 65, 81), width=2)
     try:
-        f_xl = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 58)
-        f_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 38)
-        f_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
-        f_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+        f_xl = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+        f_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26)
+        f_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 21)
+        f_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 17)
     except Exception:
         f_xl = f_lg = f_md = f_sm = ImageFont.load_default()
     live_badge = "● LIVE NOW" if is_live else "● SCOREBOARD"
-    draw.text((60, 48), f"{live_badge}  |  {sport}", fill=(255, 255, 255), font=f_lg)
-    draw.text((100, 195), match_name, fill=(250, 204, 21), font=f_lg)
-    draw.text((100, 295), score, fill=(255, 255, 255), font=f_xl)
+    draw.text((35, 32), f"{live_badge}  |  {sport}", fill=(255, 255, 255), font=f_lg)
+    draw.text((65, 130), match_name, fill=(250, 204, 21), font=f_lg)
+    draw.text((65, 195), score, fill=(255, 255, 255), font=f_xl)
     status_color = (74, 222, 128) if is_live else (56, 189, 248)
-    draw.text((100, 425), f"STATUS: {detail}", fill=status_color, font=f_md)
-    draw.text((60, 565), "🌍 24/7 Worldwide Football & Cricket Live Scores", fill=(226, 232, 240), font=f_md)
-    draw.text((60, 625), "Auto-Updates Every 15 Seconds  •  Subscribe & Comment Your Team!", fill=(148, 163, 184), font=f_sm)
+    draw.text((65, 285), f"STATUS: {detail}", fill=status_color, font=f_md)
+    draw.text((40, 380), "🌍 24/7 Worldwide Football & Cricket Live Scores", fill=(226, 232, 240), font=f_md)
+    draw.text((40, 420), "Auto-Updates Every 15 Seconds  •  Subscribe & Comment!", fill=(148, 163, 184), font=f_sm)
     img.save("temp.png")
     os.replace("temp.png", "scoreboard.png")
 
 def start_ffmpeg(rtmp_url, remaining_time):
+    # -threads 1 और -preset ultrafast से RAM 150MB से भी कम लगेगी
     cmd = [
-        "ffmpeg", "-re", "-loop", "1", "-framerate", "2", "-i", "scoreboard.png",
+        "ffmpeg", "-re", "-loop", "1", "-framerate", "1", "-i", "scoreboard.png",
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-        "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1500k", "-maxrate", "1500k",
-        "-bufsize", "3000k", "-pix_fmt", "yuv420p", "-g", "4",
-        "-c:a", "aac", "-b:a", "128k", "-t", str(int(remaining_time)), "-f", "flv", rtmp_url
+        "-threads", "1", "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "800k", "-maxrate", "800k",
+        "-bufsize", "1600k", "-pix_fmt", "yuv420p", "-g", "2",
+        "-c:a", "aac", "-b:a", "96k", "-t", str(int(remaining_time)), "-f", "flv", rtmp_url
     ]
-    return subprocess.Popen(cmd)
+    return subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True)
 
 def keep_alive_pinger():
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
@@ -126,12 +129,18 @@ def keep_alive_pinger():
                 pass
 
 def run_stream_worker(yt_key):
-    global stream_running, ffmpeg_process, match_index
+    global stream_running, ffmpeg_process, match_index, last_error
     clean_key = yt_key.strip().split("/")[-1]
     rtmp = f"rtmp://://youtube.com{clean_key}"
-    make_scoreboard_image("WORLDWIDE SPORTS", "Starting 24/7 Live Stream...", "LOADING SCORES", "Connecting to Global Server", True)
+    make_scoreboard_image("WORLDWIDE SPORTS", "Starting 24/7 Live Stream...", "LOADING SCORES", "Connecting to YouTube", True)
     start_t = time.time()
     ffmpeg_process = start_ffmpeg(rtmp, MAX_DURATION)
+    time.sleep(3)
+    if ffmpeg_process.poll() is not None:
+        last_error = ffmpeg_process.stderr.read()[-120:] if ffmpeg_process.stderr else "FFmpeg exited"
+        stream_running = False
+        return
+    last_error = "Connected to YouTube!"
     while stream_running and (time.time() - start_t < MAX_DURATION):
         if ffmpeg_process.poll() is not None:
             rem = MAX_DURATION - (time.time() - start_t)
@@ -139,7 +148,7 @@ def run_stream_worker(yt_key):
                 ffmpeg_process = start_ffmpeg(rtmp, rem)
         matches = get_worldwide_matches()
         current = matches[match_index % len(matches)]
-        make_scoreboard_image(current[0], current[1], current[2], current[3], current[4])
+        make_scoreboard_image(current, current, current, current, current)
         match_index += 1
         time.sleep(15)
     if ffmpeg_process:
@@ -148,14 +157,15 @@ def run_stream_worker(yt_key):
 
 @app.route("/", methods=["GET"])
 def home():
-    msg = "🟢 LIVE CHAL RAHA HAI (24/7 Non-Stop)" if stream_running else "🔴 BAND HAI (Stream Key daal kar Start karein)"
-    return render_template_string(HTML_PAGE, status=msg)
+    msg = "🟢 LIVE CHAL RAHA HAI" if stream_running else "🔴 BAND HAI"
+    return render_template_string(HTML_PAGE, status=msg, err=last_error)
 
 @app.route("/start", methods=["POST"])
 def start():
-    global stream_running
+    global stream_running, last_error
     if not stream_running:
         stream_running = True
+        last_error = "Connecting..."
         yt = request.form["yt_key"].strip()
         threading.Thread(target=run_stream_worker, args=(yt,), daemon=True).start()
     return home()
