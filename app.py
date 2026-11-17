@@ -10,7 +10,7 @@ app = Flask(__name__)
 stream_running = False
 ffmpeg_process = None
 match_index = 0
-status_log = "Ready (New Version 2.0)"
+status_log = "Ready v3 (Ultra-Lite)"
 
 MAX_DURATION = 604800
 
@@ -19,7 +19,7 @@ HTML_PAGE = """
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Render Live v2</title>
+    <title>Render Live v3</title>
     <style>
         body { font-family: Arial, sans-serif; background: #070b14; color: white; padding: 20px; text-align: center; }
         .box { max-width: 460px; margin: auto; background: #111827; padding: 25px; border-radius: 14px; border: 1px solid #1f2937; }
@@ -56,7 +56,7 @@ def get_worldwide_matches():
     matches = []
     for sport_label, url in FEEDS:
         try:
-            res = requests.get(url, timeout=8).json()
+            res = requests.get(url, timeout=6).json()
             for ev in res.get("events", []):
                 state = ev.get("status", {}).get("type", {}).get("state", "")
                 if state in ["in", "pre", "post"]:
@@ -83,38 +83,38 @@ def get_worldwide_matches():
     return matches[:10]
 
 def make_scoreboard_image(sport, match_name, score, detail, is_live):
-    img = Image.new("RGB", (854, 480), color=(9, 13, 26))
+    img = Image.new("RGB", (640, 360), color=(9, 13, 26))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([(10, 10), (844, 470)], outline=(56, 189, 248), width=4)
-    draw.rectangle([(10, 10), (844, 85)], fill=(2, 132, 199))
-    draw.rectangle([(40, 110), (814, 345)], fill=(17, 24, 39), outline=(55, 65, 81), width=2)
+    draw.rectangle([(8, 8), (632, 352)], outline=(56, 189, 248), width=3)
+    draw.rectangle([(8, 8), (632, 65)], fill=(2, 132, 199))
+    draw.rectangle([(30, 85), (610, 260)], fill=(17, 24, 39), outline=(55, 65, 81), width=2)
     try:
-        f_xl = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
-        f_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26)
-        f_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 21)
-        f_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 17)
+        f_xl = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+        f_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        f_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
+        f_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
     except Exception:
         f_xl = f_lg = f_md = f_sm = ImageFont.load_default()
     live_badge = "● LIVE NOW" if is_live else "● SCOREBOARD"
-    draw.text((35, 32), f"{live_badge}  |  {sport}", fill=(255, 255, 255), font=f_lg)
-    draw.text((65, 130), match_name, fill=(250, 204, 21), font=f_lg)
-    draw.text((65, 195), score, fill=(255, 255, 255), font=f_xl)
+    draw.text((25, 24), f"{live_badge}  |  {sport}", fill=(255, 255, 255), font=f_lg)
+    draw.text((50, 100), match_name, fill=(250, 204, 21), font=f_lg)
+    draw.text((50, 150), score, fill=(255, 255, 255), font=f_xl)
     status_color = (74, 222, 128) if is_live else (56, 189, 248)
-    draw.text((65, 285), f"STATUS: {detail}", fill=status_color, font=f_md)
-    draw.text((40, 380), "🌍 24/7 Worldwide Football & Cricket Live Scores", fill=(226, 232, 240), font=f_md)
-    draw.text((40, 420), "Auto-Updates Every 15 Seconds  •  Subscribe & Comment!", fill=(148, 163, 184), font=f_sm)
-    img.save("temp.png")
-    os.replace("temp.png", "scoreboard.png")
+    draw.text((50, 215), f"STATUS: {detail}", fill=status_color, font=f_md)
+    draw.text((30, 285), "🌍 24/7 Worldwide Football & Cricket Live Scores", fill=(226, 232, 240), font=f_md)
+    draw.text((30, 318), "Auto-Updates Every 15 Seconds  •  Subscribe!", fill=(148, 163, 184), font=f_sm)
+    img.save("temp.jpg", "JPEG", quality=85)
+    os.replace("temp.jpg", "scoreboard.jpg")
 
 def start_ffmpeg(rtmp_url, remaining_time):
     cmd = [
-        "ffmpeg", "-re", "-loop", "1", "-framerate", "1", "-i", "scoreboard.png",
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-        "-threads", "1", "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "800k", "-maxrate", "800k",
-        "-bufsize", "1600k", "-pix_fmt", "yuv420p", "-g", "2",
-        "-c:a", "aac", "-b:a", "96k", "-t", str(int(remaining_time)), "-f", "flv", rtmp_url
+        "ffmpeg", "-re", "-f", "image2", "-loop", "1", "-framerate", "1", "-i", "scoreboard.jpg",
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=22050",
+        "-threads", "1", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
+        "-b:v", "400k", "-maxrate", "400k", "-bufsize", "800k", "-pix_fmt", "yuv420p", "-g", "2",
+        "-c:a", "aac", "-b:a", "64k", "-t", str(int(remaining_time)), "-f", "flv", rtmp_url
     ]
-    return subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True)
+    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
 def keep_alive_pinger():
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
@@ -133,10 +133,11 @@ def run_stream_worker(yt_key):
     make_scoreboard_image("WORLDWIDE SPORTS", "Starting 24/7 Live Stream...", "LOADING SCORES", "Connecting to YouTube", True)
     start_t = time.time()
     ffmpeg_process = start_ffmpeg(rtmp, MAX_DURATION)
-    time.sleep(4)
-    if ffmpeg_process.poll() is not None:
+    time.sleep(3)
+    code = ffmpeg_process.poll()
+    if code is not None:
         err_out = ffmpeg_process.stderr.read() if ffmpeg_process.stderr else ""
-        status_log = "Error: " + (err_out[-100:] if err_out else "Failed")
+        status_log = f"Stopped ({code}): " + (err_out[-90:] if err_out else "Out of RAM")
         stream_running = False
         return
     status_log = "100% Connected to YouTube!"
