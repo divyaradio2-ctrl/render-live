@@ -10,7 +10,7 @@ app = Flask(__name__)
 stream_running = False
 ffmpeg_process = None
 match_index = 0
-last_error = "None"
+status_log = "Ready (New Version 2.0)"
 
 MAX_DURATION = 604800
 
@@ -19,7 +19,7 @@ HTML_PAGE = """
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Render 24/7 Lite Live</title>
+    <title>Render Live v2</title>
     <style>
         body { font-family: Arial, sans-serif; background: #070b14; color: white; padding: 20px; text-align: center; }
         .box { max-width: 460px; margin: auto; background: #111827; padding: 25px; border-radius: 14px; border: 1px solid #1f2937; }
@@ -33,7 +33,7 @@ HTML_PAGE = """
 <body>
     <div class="box">
         <h2>🌍 Render 24/7 Sports Live</h2>
-        <div class="status">Status: <b>{{ status }}</b><br><small style="color:#f87171;">Log: {{ err }}</small></div>
+        <div class="status">Status: <b>{{ status }}</b><br><b style="color:#4ade80;">Log: {{ err }}</b></div>
         <form method="POST" action="/start">
             <input type="text" name="yt_key" placeholder="यहाँ अपनी YouTube Stream Key डालें" required><br>
             <button type="submit" class="start">▶ START NON-STOP LIVE</button>
@@ -63,13 +63,13 @@ def get_worldwide_matches():
                     name = ev.get("shortName", ev.get("name", "LIVE MATCH"))
                     status_detail = ev.get("status", {}).get("type", {}).get("shortDetail", "Live Updates")
                     comp = ev.get("competitions", [{}])
-                    competitors = comp.get("competitors", []) if comp else []
+                    competitors = comp[0].get("competitors", []) if comp else []
                     score_str = "Match Starting Soon"
                     if len(competitors) >= 2:
-                        t1 = competitors.get("team", {}).get("abbreviation", "TEAM 1")
-                        s1 = competitors.get("score", "0")
-                        t2 = competitors.get("team", {}).get("abbreviation", "TEAM 2")
-                        s2 = competitors.get("score", "0")
+                        t1 = competitors[0].get("team", {}).get("abbreviation", "TEAM 1")
+                        s1 = competitors[0].get("score", "0")
+                        t2 = competitors[1].get("team", {}).get("abbreviation", "TEAM 2")
+                        s2 = competitors[1].get("score", "0")
                         score_str = f"{t1}  {s1}   vs   {t2}  {s2}"
                     item = (sport_label, name[:38], score_str[:34], status_detail[:45], state == "in")
                     if state == "in":
@@ -83,7 +83,6 @@ def get_worldwide_matches():
     return matches[:10]
 
 def make_scoreboard_image(sport, match_name, score, detail, is_live):
-    # Render के 512MB RAM के लिए 854x480 (HD Lite) साइज ताकि RAM कभी न भरे
     img = Image.new("RGB", (854, 480), color=(9, 13, 26))
     draw = ImageDraw.Draw(img)
     draw.rectangle([(10, 10), (844, 470)], outline=(56, 189, 248), width=4)
@@ -108,7 +107,6 @@ def make_scoreboard_image(sport, match_name, score, detail, is_live):
     os.replace("temp.png", "scoreboard.png")
 
 def start_ffmpeg(rtmp_url, remaining_time):
-    # -threads 1 और -preset ultrafast से RAM 150MB से भी कम लगेगी
     cmd = [
         "ffmpeg", "-re", "-loop", "1", "-framerate", "1", "-i", "scoreboard.png",
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
@@ -129,18 +127,19 @@ def keep_alive_pinger():
                 pass
 
 def run_stream_worker(yt_key):
-    global stream_running, ffmpeg_process, match_index, last_error
+    global stream_running, ffmpeg_process, match_index, status_log
     clean_key = yt_key.strip().split("/")[-1]
-    rtmp = f"rtmp://://youtube.com{clean_key}"
+    rtmp = "rtmp://://youtube.com" + clean_key
     make_scoreboard_image("WORLDWIDE SPORTS", "Starting 24/7 Live Stream...", "LOADING SCORES", "Connecting to YouTube", True)
     start_t = time.time()
     ffmpeg_process = start_ffmpeg(rtmp, MAX_DURATION)
-    time.sleep(3)
+    time.sleep(4)
     if ffmpeg_process.poll() is not None:
-        last_error = ffmpeg_process.stderr.read()[-120:] if ffmpeg_process.stderr else "FFmpeg exited"
+        err_out = ffmpeg_process.stderr.read() if ffmpeg_process.stderr else ""
+        status_log = "Error: " + (err_out[-100:] if err_out else "Failed")
         stream_running = False
         return
-    last_error = "Connected to YouTube!"
+    status_log = "100% Connected to YouTube!"
     while stream_running and (time.time() - start_t < MAX_DURATION):
         if ffmpeg_process.poll() is not None:
             rem = MAX_DURATION - (time.time() - start_t)
@@ -148,7 +147,7 @@ def run_stream_worker(yt_key):
                 ffmpeg_process = start_ffmpeg(rtmp, rem)
         matches = get_worldwide_matches()
         current = matches[match_index % len(matches)]
-        make_scoreboard_image(current, current, current, current, current)
+        make_scoreboard_image(current[0], current[1], current[2], current[3], current[4])
         match_index += 1
         time.sleep(15)
     if ffmpeg_process:
@@ -158,22 +157,23 @@ def run_stream_worker(yt_key):
 @app.route("/", methods=["GET"])
 def home():
     msg = "🟢 LIVE CHAL RAHA HAI" if stream_running else "🔴 BAND HAI"
-    return render_template_string(HTML_PAGE, status=msg, err=last_error)
+    return render_template_string(HTML_PAGE, status=msg, err=status_log)
 
 @app.route("/start", methods=["POST"])
 def start():
-    global stream_running, last_error
+    global stream_running, status_log
     if not stream_running:
         stream_running = True
-        last_error = "Connecting..."
+        status_log = "Connecting..."
         yt = request.form["yt_key"].strip()
         threading.Thread(target=run_stream_worker, args=(yt,), daemon=True).start()
     return home()
 
 @app.route("/stop", methods=["POST"])
 def stop():
-    global stream_running, ffmpeg_process
+    global stream_running, ffmpeg_process, status_log
     stream_running = False
+    status_log = "Stopped by User"
     if ffmpeg_process:
         ffmpeg_process.terminate()
     return home()
